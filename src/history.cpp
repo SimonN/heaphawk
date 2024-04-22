@@ -136,14 +136,11 @@ void History::summary() {
 
         int64_t startSize = 0;
         int64_t endSize = 0;
-        int64_t deltaSize = 0;
         int64_t startTime = 0;
         int64_t endTime = 0;
         if (firstSnapshot && lastSnapshot && firstSnapshot != lastSnapshot) {
             startSize = firstSnapshot->calcHeapUsage();
             endSize = lastSnapshot->calcHeapUsage();
-            deltaSize = endSize - startSize;
-
             startTime = firstSnapshot->timestamp();
             endTime = lastSnapshot->timestamp();
         }
