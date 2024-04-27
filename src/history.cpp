@@ -70,20 +70,27 @@ struct SortHelper {
     }
 };
 
+
+
 static std::string formatTimeInterval(std::chrono::seconds interval) {
     char buf[256];
     if (interval.count() < 60) {
         snprintf(buf, sizeof(buf), "%ds", static_cast<int>(interval.count()));
     } else if (interval.count() < 3600) {
         auto minutes = std::chrono::duration_cast<std::chrono::minutes>(interval);
-        int partMinutes = interval.count() - minutes.count() * 60;
-        snprintf(buf, sizeof(buf), "%02dm:%02ds", static_cast<int>(minutes.count()), partMinutes);
-    } else {
+        int seconds = interval.count() - minutes.count() * 60;
+        snprintf(buf, sizeof(buf), "%02dm:%02ds", static_cast<int>(minutes.count()), seconds);
+    } else if (interval.count() < 3600 * 24) {
         int hours = std::chrono::duration_cast<std::chrono::hours>(interval).count();
         int minutes = (interval.count() - hours * 3600) / 60;
-        int partMinutes = interval.count() - hours * 3600 - minutes * 60;
-        snprintf(buf, sizeof(buf), "%02dh:%02dm:%02ds", hours, minutes, partMinutes);
-
+        int seconds = interval.count() - hours * 3600 - minutes * 60;
+        snprintf(buf, sizeof(buf), "%02dh:%02dm:%02ds", hours, minutes, seconds);
+    } else {
+        int days = std::chrono::duration_cast<std::chrono::hours>(interval).count() / 24;
+        int hours = std::chrono::duration_cast<std::chrono::hours>(interval).count() - days * 24;
+        int minutes = (interval.count() - days * 3600 * 24 - hours * 3600) / 60;
+        int seconds = interval.count() - days * 3600 * 24 - hours * 3600 - minutes * 60;
+        snprintf(buf, sizeof(buf), "%dd:%02dh:%02dm:%02ds", days, hours, minutes, seconds);
     }
     return std::string(buf);
 }
