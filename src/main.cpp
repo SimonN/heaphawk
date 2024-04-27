@@ -195,7 +195,7 @@ void cmdSummary(const std::vector<std::string>& args) {
         }
     }
 
-    history.load();
+    history.load(History::LoadHint::firstAndLast);
     history.summary();
 }
 
@@ -211,7 +211,7 @@ void cmdPlot(const std::vector<std::string>& args) {
         }
     }
 
-    history.load();
+    history.load(History::LoadHint::all);
     history.plot();
 }
 

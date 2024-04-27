@@ -11,13 +11,18 @@ class Snapshot;
 
 class History {
 public:
+    enum class LoadHint {
+        all,
+        firstAndLast,
+    };
+
     History();
 
     ~History();
 
     void setSampleFilePath(const std::string& path);
 
-    void load();
+    void load(LoadHint mode);
 
     void summary();
 

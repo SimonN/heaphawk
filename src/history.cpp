@@ -19,14 +19,14 @@ void History::setSampleFilePath(const std::string& sampleFilePath) {
     mSampleFilePath = sampleFilePath;
 }
 
-void History::load() {
+void History::load(LoadHint hint) {
     std::ifstream stream(mSampleFilePath, stream.binary|stream.in);
     if (!stream.is_open()) {
         printf("failed to open archive file %s\n", mSampleFilePath.c_str());
         return;
     }
 
-    int loadedSnapshotCount = 0;
+    int processedSnapshotCount = 0;
     while (!stream.eof()) {
         auto snapshot = new Snapshot();
         if (!snapshot->readFromFile(stream, mPrevSnapshots)) {
@@ -47,13 +47,34 @@ void History::load() {
             process = it->second;
         }
 
-        process->addSnapshot(snapshot);
+        if (hint == LoadHint::all
+            || process->snapshots().empty()) {
+            process->addSnapshot(snapshot);
+        }
 
         mPrevSnapshots[snapshot->processId()] = snapshot;
-        loadedSnapshotCount++;
+        processedSnapshotCount++;
     }
 
-    printf("did load %d snapshots for %d processes\n", loadedSnapshotCount, static_cast<int>(mProcesses.size()));
+    if (hint == LoadHint::firstAndLast) {
+        // add last entry
+        for (auto it : mPrevSnapshots) {
+            auto* snapshot = it.second;
+            auto it2 = mProcesses.find(snapshot->processId());
+            Process* process;
+            if (it2 == mProcesses.end()) {
+                process = new Process(snapshot->processId(), snapshot->name());
+                mProcesses[process->processId()] = process;
+            } else {
+                process = it2->second;
+            }
+
+            if (process->firstSnapshot() != snapshot) {
+                process->addSnapshot(snapshot);
+            }
+        }
+    }
+    printf("did process %d snapshots for %d processes\n", processedSnapshotCount, static_cast<int>(mProcesses.size()));
 }
 
 struct SortHelper {
@@ -69,8 +90,6 @@ struct SortHelper {
         return mValue > other.mValue;
     }
 };
-
-
 
 static std::string formatTimeInterval(std::chrono::seconds interval) {
     char buf[256];
@@ -96,7 +115,7 @@ static std::string formatTimeInterval(std::chrono::seconds interval) {
 }
 
 std::vector<Process*> History::processesSortedByGrowth() {
-      // sort by used heap
+    // sort by used heap
     std::vector<SortHelper> processes;
     for (auto it : mProcesses) {
         auto process = it.second;
