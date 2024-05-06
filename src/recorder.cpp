@@ -91,6 +91,7 @@ void Recorder::record() {
     int count = 0;
     while (true) {
         recordSnapshots(stream);
+        stream.flush();
 
         sleep(mSampleInterval.count());
 
