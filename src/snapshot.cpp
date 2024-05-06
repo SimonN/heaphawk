@@ -78,8 +78,8 @@ bool Snapshot::parseHeadline(const std::string& headline, Entry& entry) {
 }
 
 bool Snapshot::isHeadline(const std::string& str) {
-    uint32_t a, b;
-    auto count = sscanf(str.c_str(), "%x-%x", &a, &b);
+    uint64_t a, b;
+    auto count = sscanf(str.c_str(), "%" PRIx64 "-%" PRIx64 , &a, &b);
     return count == 2;
 }
 
