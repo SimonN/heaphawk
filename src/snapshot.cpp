@@ -104,7 +104,7 @@ std::string Snapshot::readLine(FILE* f) {
 bool Snapshot::parseValue(const std::string& line, Entry& entry) {
     auto idx = line.find(':');
     if (idx == std::string::npos) {
-    printf("missing : in value line \"%s\"\n", line.c_str());
+        printf("missing : in value line \"%s\"\n", line.c_str());
         return false;
     }
 
