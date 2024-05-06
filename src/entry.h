@@ -7,21 +7,29 @@
 class Snapshot;
 
 class Entry {
-public: 
+public:
     enum class ParseResult {
         ok,
         error,
         unknown,
     };
 
+    bool operator == (const Entry& other) const;
+
+    bool operator != (const Entry& other) const;
+
     bool write(std::ofstream& stream, const Entry* prevEntry) const;
+
     bool read(std::ifstream& stream, const Snapshot* prevSnapshot);
+
     ParseResult parseValue(const std::string& name, const std::string& valueAndUnit);
 
     uint64_t mFrom;
     uint64_t mTo;
 
     std::string mPermissions;
+
+    // This is the offset of the mapping into a mapped file, otherwise 0.
     uint64_t mOffset;
     std::string mDevice;
     std::string mPathName;
@@ -30,8 +38,6 @@ public:
     uint64_t mKernelPageSize = 0;
     uint64_t mMMUPageSize = 0;
     uint64_t mRss = 0;
-    uint64_t mPss = 0;
-    uint64_t mPss_Dirty = 0;
     uint64_t mShared_Clean = 0;
     uint64_t mShared_Dirty = 0;
     uint64_t mPrivate_Clean = 0;

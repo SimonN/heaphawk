@@ -14,13 +14,42 @@ Snapshot::~Snapshot() {
 }
 
 const Entry* Snapshot::findEntryByStartAddress(uint64_t startAddress) const {
-    for (auto& entry : mEntries) {
-        if (entry.mFrom == startAddress) {
-            return &entry;
+    for (const auto& it : mEntries) {
+        if (it.second.mFrom == startAddress) {
+            return &it.second;
         }
     }
 
     return nullptr;
+}
+
+// compares everything but the timestamp
+bool Snapshot::isEqualTo(const Snapshot& other) const {
+    if (mProcessId != other.mProcessId) {
+        return false;
+    }
+
+    if (mName != other.mName) {
+        return false;
+    }
+
+    auto it1 = mEntries.cbegin();
+    auto it2 = other.mEntries.cbegin();
+
+    while (it1 != mEntries.cend()) {
+        if (it2 == other.mEntries.cend()) {
+            return false;
+        }
+
+        if (it1->second != it2->second) {
+            return false;
+        }
+
+        ++it1;
+        ++it2;
+    }
+
+    return true;
 }
 
 std::string Snapshot::getProcessName() {
@@ -46,8 +75,9 @@ std::string Snapshot::getProcessName() {
 }
 
 bool Snapshot::parseHeadline(const std::string& headline, Entry& entry) {
-    // from-to           permissions offset   device  inode      pathname
-    // ffff0000-ffff1000 r-xp        00000000 00:00   0          [vectors]
+    // from-to                   permissions offset   device  inode      pathname
+    // ffff0000-ffff1000         r-xp        00000000 00:00   0          [vectors]
+    // 7fc9e2600000-7fc9e260d000 rw-p        00000000 00:00   0
     char permissions[256];
     char pathName[256];
     char device[256];
@@ -112,36 +142,44 @@ bool Snapshot::parseValue(const std::string& line, Entry& entry) {
     auto valueAndUnit = line.substr(idx + 1);
 
     auto result = entry.parseValue(name, valueAndUnit);
+    if (result == Entry::ParseResult::error) {
+        printf("failed to parse valueAndUnit \'%s\' from line %s", valueAndUnit.c_str(), line.c_str());
+    }
 
 
     return result != Entry::ParseResult::error;
 }
 
+bool Snapshot::writeToFileKilled(std::ofstream& stream) {
+    return writeUInt32(stream, 0xffffffff);
+}
+
 bool Snapshot::writeToFile(std::ofstream& stream, const Snapshot* prevSnapshot) {
-    // write version
-    uint32_t version = 1;
-    writeInt32(stream, version);
 
     // process id
-    writeInt32(stream, mProcessId);
+    writeUInt32(stream, mProcessId);
+
+    // write process name only for the first snapshot of this process
+    if (!prevSnapshot) {
+        // write name
+        writeString(stream, mName);
+    }
 
     // write timestamp
     writeUInt64(stream, mTimestamp);
-
-    // write name
-    writeString(stream, mName);
 
     // count
     int count = static_cast<int>(mEntries.size());
     writeInt32(stream, count);
 
-    for (const auto& ent : mEntries) {
+    for (const auto& it : mEntries) {
+        const auto& entry = it.second;
         const Entry* prevEntry = nullptr;
         if (prevSnapshot) {
-            prevEntry = prevSnapshot->findEntryByStartAddress(ent.mFrom);
+            prevEntry = prevSnapshot->findEntryByStartAddress(entry.mFrom);
         }
 
-        if (!ent.write(stream, prevEntry)) {
+        if (!entry.write(stream, prevEntry)) {
             return false;
         }
     }
@@ -149,52 +187,51 @@ bool Snapshot::writeToFile(std::ofstream& stream, const Snapshot* prevSnapshot) 
     return true;
 }
 
-bool Snapshot::readFromFile(std::ifstream& stream, const std::map<pid_t, Snapshot*>& prevSnapshots) {
-   
-    // version
-    int32_t version;
-    readInt32(stream, version);    
-    if (stream.eof()) {
-        return false;
-    }
-    if (version != 1) {
-        printf("Invalid snapshot version in history (%d) at %x\n", version, static_cast<int>(stream.tellg()));
-        return false;
-    }
-
+Snapshot::ReadFileResult Snapshot::readFromFile(std::ifstream& stream, const std::map<pid_t, Snapshot*>& prevSnapshots) {
     // process id
-    readInt32(stream, mProcessId);
-    
-    // timestamp
-    readInt64(stream, mTimestamp);
-
-    // read name
-    readString(stream, mName);
-
-    // count
-    int count;
-    readInt32(stream, count);
+    uint32_t pid;
+    readUInt32(stream, pid);
+    if (pid == 0xffffffff) {
+        // process is marked as killed
+        return ReadFileResult::killed;
+    }
+    mProcessId = static_cast<pid_t>(pid);
 
     const Snapshot* prevSnapshot = nullptr;
     auto it = prevSnapshots.find(mProcessId);
     if (it != prevSnapshots.end()) {
         prevSnapshot = it->second;
     }
-    
+
+    // read name
+    if (!prevSnapshot) {
+        readString(stream, mName);
+    } else {
+        mName = prevSnapshot->mName;
+    }
+
+    // timestamp
+    readInt64(stream, mTimestamp);
+
+    // count
+    int count;
+    readInt32(stream, count);
+
     for (int i = 0; i < count; i++) {
         Entry ent;
         if (!ent.read(stream, prevSnapshot)) {
-            return false;
+            return ReadFileResult::failed;
         }
-        mEntries.push_back(ent);
+        mEntries[ent.mFrom] = ent;
     }
 
-    return true;
+    return ReadFileResult::ok;
 }
 
 int64_t Snapshot::calcHeapUsage() const {
     int64_t heapUsage = 0;
-    for (const auto& entry : mEntries) {
+    for (const auto& it : mEntries) {
+        const auto& entry = it.second;
         if (entry.mPathName == "[heap]") {
             heapUsage += entry.mReferenced;
         } else if (entry.mPathName.empty()) {
@@ -244,7 +281,10 @@ bool Snapshot::take() {
         if (!result) {
             break;
         }
-        mEntries.push_back(entry);
+        if (mEntries.find(entry.mFrom) != mEntries.end()) {
+            printf("found same start address twice %" PRIx64 "\n", entry.mFrom);
+        }
+        mEntries[entry.mFrom] = entry;
     }
 
     fclose(f);

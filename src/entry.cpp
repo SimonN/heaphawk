@@ -4,21 +4,45 @@
 #include <inttypes.h>
 #include <array>
 
-struct ValueDesc {
-    typedef uint64_t Entry::*MemberPointer;
+enum class Type {
+    typeUInt64,
+    typeString,
+};
 
-    ValueDesc(const std::string& name, MemberPointer ptr, size_t index) : mName(name), mMember(ptr), mIndex(index) {}
+struct ValueDescBase {
+    ValueDescBase(const std::string name, Type type, size_t index) : mName(name), mType(type), mIndex(index) {}
 
-    void writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const;
+    virtual void writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const = 0;
 
-    void readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const;
+    virtual void readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const = 0;
+
+    virtual bool equals(const Entry& a, const Entry& b) const = 0;
 
     std::string mName;
-    uint64_t Entry::*mMember;
+
+    Type mType;
+
     size_t mIndex;
 };
 
-void ValueDesc::writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const {
+template<class T>
+struct ValueDesc : public ValueDescBase {
+
+    using MemberPointer = T Entry::*;
+
+    ValueDesc(const std::string& name, Type type, MemberPointer ptr, size_t index) : ValueDescBase(name, type, index), mMember(ptr) {}
+
+    void writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const override;
+
+    void readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const override;
+
+    virtual bool equals(const Entry& a, const Entry& b) const override;
+
+    T Entry::*mMember;
+};
+
+template<>
+void ValueDesc<uint64_t>::writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const {
     auto value = curEntry.*mMember;
     if (prevEntry) {
         auto prevValue = prevEntry->*mMember;
@@ -30,7 +54,21 @@ void ValueDesc::writeValue(std::ofstream& stream, uint32_t& flags, const Entry& 
     writeUInt64(stream, value);
 }
 
-void ValueDesc::readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const {
+template<>
+void ValueDesc<std::string>::writeValue(std::ofstream& stream, uint32_t& flags, const Entry& curEntry, const Entry* prevEntry) const {
+    auto value = curEntry.*mMember;
+    if (prevEntry) {
+        auto prevValue = prevEntry->*mMember;
+        if (value == prevValue) {
+            return;
+        }
+    }
+    flags |= (1 << mIndex);
+    writeString(stream, value);
+}
+
+template<>
+void ValueDesc<uint64_t>::readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const {
     if (flags & (1 << mIndex)) {
         uint64_t value;
         stream.read(reinterpret_cast<char*>(&value), sizeof(value));
@@ -40,47 +78,93 @@ void ValueDesc::readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry
     }
 }
 
+template<>
+void ValueDesc<std::string>::readValue(std::ifstream& stream, uint32_t flags, Entry& curEntry, const Entry* prevEntry) const {
+    if (flags & (1 << mIndex)) {
+        std::string value;
+        readString(stream, value);
+        curEntry.*mMember = value;
+    } else {
+        curEntry.*mMember = prevEntry->*mMember;
+    }
+}
 
-#define MAKE_VALUE(name, index) ValueDesc(#name, &Entry::m##name, index)
+template<class T>
+bool ValueDesc<T>::equals(const Entry& a, const Entry& b) const {
+    return a.*mMember == b.*mMember;
+}
 
-const std::array<ValueDesc, 22>& valueDescs() {
-    static const std::array<ValueDesc, 22> ValueDescs = {
-        MAKE_VALUE(Size, 0),
-        MAKE_VALUE(KernelPageSize, 1),
-        MAKE_VALUE(MMUPageSize, 2),
-        MAKE_VALUE(Rss, 3),
-        MAKE_VALUE(Pss, 4),
-        MAKE_VALUE(Pss_Dirty, 5),
-        MAKE_VALUE(Shared_Clean, 6),
-        MAKE_VALUE(Shared_Dirty, 7),
-        MAKE_VALUE(Private_Clean, 8),
-        MAKE_VALUE(Private_Dirty, 9),
-        MAKE_VALUE(Referenced, 10),
-        MAKE_VALUE(Anonymous, 11),
-        MAKE_VALUE(KSM, 12),
-        MAKE_VALUE(LazyFree, 13),
-        MAKE_VALUE(AnonHugePages, 14),
-        MAKE_VALUE(ShmemPmdMapped, 15),
-        MAKE_VALUE(Shared_Hugetlb, 16),
-        MAKE_VALUE(Private_Hugetlb, 17),
-        MAKE_VALUE(Swap, 18),
-        MAKE_VALUE(SwapPss, 19),
-        MAKE_VALUE(Locked, 20),
-        MAKE_VALUE(FilePmdMapped, 21)
+template<>
+bool ValueDesc<uint64_t>::equals(const Entry& a, const Entry& b) const {
+    return (a.*mMember) == (b.*mMember);
+}
+
+
+#define MAKE_UINT64_VALUE(name, index) new ValueDesc<uint64_t>(#name, Type::typeUInt64, &Entry::m##name, index)
+#define MAKE_STRING_VALUE(name, index) new ValueDesc<std::string>(#name, Type::typeString, &Entry::m##name, index)
+
+const std::array<ValueDescBase*, 26>& valueDescs() {
+    static const std::array<ValueDescBase*, 26> ValueDescs = {
+        MAKE_UINT64_VALUE(From, 0),
+        MAKE_UINT64_VALUE(To, 1),
+
+        MAKE_STRING_VALUE(Permissions, 2),
+        MAKE_UINT64_VALUE(Offset, 3),
+        MAKE_STRING_VALUE(Device, 4),
+        MAKE_STRING_VALUE(PathName, 5),
+
+        MAKE_UINT64_VALUE(Size, 6),
+        MAKE_UINT64_VALUE(KernelPageSize, 7),
+        MAKE_UINT64_VALUE(MMUPageSize, 8),
+        MAKE_UINT64_VALUE(Rss, 9),
+        MAKE_UINT64_VALUE(Shared_Clean, 10),
+        MAKE_UINT64_VALUE(Shared_Dirty, 11),
+        MAKE_UINT64_VALUE(Private_Clean, 12),
+        MAKE_UINT64_VALUE(Private_Dirty, 13),
+        MAKE_UINT64_VALUE(Referenced, 14),
+        MAKE_UINT64_VALUE(Anonymous, 15),
+        MAKE_UINT64_VALUE(KSM, 16),
+        MAKE_UINT64_VALUE(LazyFree, 17),
+        MAKE_UINT64_VALUE(AnonHugePages, 18),
+        MAKE_UINT64_VALUE(ShmemPmdMapped, 19),
+        MAKE_UINT64_VALUE(Shared_Hugetlb, 20),
+        MAKE_UINT64_VALUE(Private_Hugetlb, 21),
+        MAKE_UINT64_VALUE(Swap, 22),
+        MAKE_UINT64_VALUE(SwapPss, 23),
+        MAKE_UINT64_VALUE(Locked, 24),
+        MAKE_UINT64_VALUE(FilePmdMapped, 25)
     };
 
     return ValueDescs;
 }
 
+bool Entry::operator == (const Entry& other) const {
+    for (const auto* desc : valueDescs()) {
+        if (!desc->equals(*this, other)) {
+            return false;
+        }
+    }
 
+    return true;
+}
+
+bool Entry::operator != (const Entry& other) const {
+    for (const auto* desc : valueDescs()) {
+        if (!desc->equals(*this, other)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // example: "1084 kB"
 Entry::ParseResult Entry::parseValue(const std::string& name, const std::string& valueAndUnit) {
 
-    const ValueDesc* valueDesc = nullptr;
-    for (const auto& desc : valueDescs()) {
-        if (desc.mName == name) {
-            valueDesc = &desc;
+    const ValueDescBase* valueDesc = nullptr;
+    for (const auto* desc : valueDescs()) {
+        if (desc->mName == name) {
+            valueDesc = desc;
             break;
         }
     }
@@ -109,34 +193,40 @@ Entry::ParseResult Entry::parseValue(const std::string& name, const std::string&
         return ParseResult::error;
     }
 
-    this->*valueDesc->mMember = value;
+    if (valueDesc->mType == Type::typeUInt64) {
+        auto vd = reinterpret_cast<const ValueDesc<uint64_t>*>(valueDesc);
+        this->*vd->mMember = value;
+    } else if (valueDesc->mType == Type::typeString) {
+        auto vd = reinterpret_cast<const ValueDesc<std::string>*>(valueDesc);
+        this->*vd->mMember = value;
+    }
+
     return ParseResult::ok;
 }
 
 bool Entry::write(std::ofstream& stream, const Entry* prevEntry) const {
     bool ok = true;
     writeInt32(stream, 0x12563478); // sync
-    
+
     writeUInt64(stream, mFrom);
-    writeUInt64(stream, mTo);
-    writeString(stream, mPermissions);
-    writeUInt64(stream, mOffset);
-    writeString(stream, mDevice);
-    writeString(stream, mPathName);
 
     uint32_t flags = 0;
     auto flagsPos = stream.tellp();
 
     writeUInt32(stream, flags);
-    for (const auto& desc : valueDescs()) {
-       desc.writeValue(stream, flags, *this, prevEntry);
+    for (const auto* desc : valueDescs()) {
+        if (desc->mName == "From") {
+            continue;
+        }
+
+        desc->writeValue(stream, flags, *this, prevEntry);
     }
-    
+
     auto endPos = stream.tellp();
 
     stream.seekp(flagsPos);
     writeUInt32(stream, flags);
-        
+
     stream.seekp(endPos);
     return ok;
 }
@@ -151,11 +241,6 @@ bool Entry::read(std::ifstream& stream, const Snapshot* prevSnapshot) {
     }
 
     readUInt64(stream, mFrom);
-    readUInt64(stream, mTo);
-    readString(stream, mPermissions);
-    readUInt64(stream, mOffset);
-    readString(stream, mDevice);
-    readString(stream, mPathName);
 
     const Entry* prevEntry = nullptr;
     if (prevSnapshot) {
@@ -164,9 +249,12 @@ bool Entry::read(std::ifstream& stream, const Snapshot* prevSnapshot) {
 
     uint32_t flags = 0;
     readUInt32(stream, flags);
+    for (const auto* desc : valueDescs()) {
+        if (desc->mName == "From") {
+            continue;
+        }
 
-    for (const auto& desc : valueDescs()) {
-        desc.readValue(stream, flags, *this, prevEntry);
+        desc->readValue(stream, flags, *this, prevEntry);
     }
 
     return ok;

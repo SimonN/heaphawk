@@ -7,6 +7,7 @@
 #include <time.h>
 #include <fstream>
 #include <memory>
+#include <set>
 
 Recorder::Recorder() {
 }
@@ -38,7 +39,7 @@ bool Recorder::isPidDir(const struct dirent* entry) {
     return true;
 }
 
-void Recorder::recordSnapshots(std::ofstream& stream) {
+void Recorder::recordSnapshots(std::ofstream& stream, bool firstTake) {
     printf("taking snapshots\n");
 
     auto dir = opendir("/proc");
@@ -46,10 +47,18 @@ void Recorder::recordSnapshots(std::ofstream& stream) {
         printf("failed to open /proc (errno=%d)\n", errno);
         exit(1);
     }
-    
+
     auto timestamp = time(nullptr);
-    
-    int processCount = 0;
+
+    int totalCount = 0;
+    int changedCount = 0;
+    int newCount = 0;
+
+    std::set<pid_t> prevPids;
+    for (const auto& it : mPrevSnapshots) {
+        prevPids.insert(it.second->processId());
+    }
+
     while (auto entry = readdir(dir)) {
         if (!isPidDir(entry)) {
             continue;
@@ -62,35 +71,63 @@ void Recorder::recordSnapshots(std::ofstream& stream) {
             continue;
         }
 
+        prevPids.erase(pid);
+
         auto snapshot = std::make_unique<Snapshot>(pid, timestamp);
         if(snapshot->take()) {
             Snapshot* prevSnapshot = nullptr;
             auto it = mPrevSnapshots.find(snapshot->processId());
             if (it != mPrevSnapshots.end()) {
                 prevSnapshot = it->second.get();
+                if (prevSnapshot->isEqualTo(*snapshot)) {
+                    totalCount++;
+                    continue;
+                }
+            } else {
+                newCount++;
             }
             snapshot->writeToFile(stream, prevSnapshot);
+            if (!firstTake) {
+                printf("process %s [%d] changed\n", snapshot->name().c_str(), snapshot->processId());
+            }
             mPrevSnapshots[snapshot->processId()] = std::move(snapshot);
         }
-        processCount++;
+
+
+        changedCount++;
+        totalCount++;
     }
-    printf("took snapshots of %d processes\n", processCount);
+
+    if (firstTake) {
+        printf("took snapshots of %d processes\n", totalCount);
+    } else {
+        printf("took snapshots of %d processes, %d changed, %d new, %d removed\n", totalCount, changedCount, newCount, static_cast<int>(prevPids.size()));
+    }
+
+    for (auto pid : prevPids) {
+        auto it = mPrevSnapshots.find(pid);
+        it->second->writeToFileKilled(stream);
+        mPrevSnapshots.erase(it);
+    }
 
     closedir(dir);
 }
 
 void Recorder::record() {
     unlink(mSampleFilePath.c_str());
-    
+
     std::ofstream stream(mSampleFilePath.c_str(), std::ofstream::binary | std::ofstream::ate | std::ofstream::out);
     if (!stream.is_open()) {
         printf("failed to open snapshots file %s\n", mSampleFilePath.c_str());
         exit(1);
     }
 
+    constexpr uint32_t version = 1;
+    writeUInt32(stream, version);
+
     int count = 0;
     while (true) {
-        recordSnapshots(stream);
+        recordSnapshots(stream, count == 0);
         stream.flush();
 
         sleep(mSampleInterval.count());

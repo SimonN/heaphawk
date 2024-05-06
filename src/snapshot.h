@@ -10,6 +10,12 @@
 // Contains entries for one process at one point in time
 class Snapshot {
 public:
+    enum class ReadFileResult {
+        ok,
+        failed,
+        killed,
+    };
+
     Snapshot() = default;
 
     Snapshot(pid_t processId, int64_t timestamp);
@@ -22,17 +28,23 @@ public:
 
     const std::string& name() const { return mName; }
 
+    bool writeToFileKilled(std::ofstream& stream);
+
     bool writeToFile(std::ofstream& stream, const Snapshot* prevSnapshot);
 
-    bool readFromFile(std::ifstream& stream, const std::map<pid_t, Snapshot*>& prevSnapshots);
+    ReadFileResult readFromFile(std::ifstream& stream, const std::map<pid_t, Snapshot*>& prevSnapshots);
 
-    const std::vector<Entry>& entries() { return mEntries; }
+    const std::map<uint64_t, Entry>& entries() { return mEntries; }
+
+    const std::map<uint64_t, Entry>& entries() const { return mEntries; }
 
     bool take();
 
     int64_t calcHeapUsage() const;
 
     const Entry* findEntryByStartAddress(uint64_t startAddress) const;
+
+    bool isEqualTo(const Snapshot& other) const;
 
 private:
     Snapshot(const Snapshot&) = delete;
@@ -50,9 +62,10 @@ private:
 
     pid_t mProcessId = 0;
 
-    int64_t mTimestamp = 0;
-
     std::string mName;
 
-    std::vector<Entry> mEntries;
+    int64_t mTimestamp = 0;
+
+    // entries by start address
+    std::map<uint64_t, Entry> mEntries;
 };

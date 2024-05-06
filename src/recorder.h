@@ -29,7 +29,7 @@ public:
 private:
     static bool isPidDir(const struct dirent* entry);
 
-    void recordSnapshots(std::ofstream& stream);
+    void recordSnapshots(std::ofstream& stream, bool firstTake);
 
     std::string mSampleFilePath = DEFAULT_SAMPLE_FILE_NAME;
 

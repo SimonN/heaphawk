@@ -26,10 +26,27 @@ void History::load(LoadHint hint) {
         return;
     }
 
+    uint32_t version;
+    if (!readUInt32(stream, version)) {
+        printf("failed to read version from archive file\n");
+        return;
+    }
+
+    if (version != 1) {
+        printf("invalid archive file version %u, expected 1", version);
+        return;
+    }
+
     int processedSnapshotCount = 0;
-    while (!stream.eof()) {
+    while (!stream.eof() && stream.peek() != EOF) {
         auto snapshot = new Snapshot();
-        if (!snapshot->readFromFile(stream, mPrevSnapshots)) {
+        auto res = snapshot->readFromFile(stream, mPrevSnapshots);
+        if (res == Snapshot::ReadFileResult::killed) {
+            delete snapshot;
+            continue;
+        }
+
+        if (res == Snapshot::ReadFileResult::failed) {
             delete snapshot;
             if (stream.eof()) {
                 break;
